@@ -6,6 +6,7 @@
 import type { User } from "./auth";
 import { cached } from "./cache";
 import { aiHelperStatus } from "./ai-helper";
+import { monthSpend } from "./ops";
 
 /** Google details cost per business (src/google-details.ts) and how many one run looks up. */
 export const GOOGLE_DETAIL_COST = 0.005;
@@ -39,6 +40,8 @@ export interface NextStepCounts {
   noGoogle: number;
   /** Real websites not checked or queued yet (the person's own for members). */
   sitesUnchecked: number;
+  /** Dollars left of this month’s paid budget (admins; undefined = not looked up). */
+  budgetLeft?: number;
   /** The AI helper: keyed = GEMINI_API_KEY is set; null status when it couldn't be read. */
   ai: { keyed: boolean; enabled?: boolean; doneToday?: number; waiting?: number; waitingMore?: boolean; problem?: string | null; pausedUntil?: string | null } | null;
 }
@@ -67,7 +70,8 @@ export function planNextSteps(c: NextStepCounts, role: User["role"]): NextStep[]
       text: fmt(c.myWaiting) + " of your leads " + plural(c.myWaiting, "is", "are") + " waiting for a first call or email",
     });
   }
-  if (admin && c.noGoogle > 0) {
+  // Paid: only offered while this month’s budget has room (a $0 budget pauses paid services).
+  if (admin && c.noGoogle > 0 && (c.budgetLeft ?? Infinity) >= GOOGLE_DETAIL_COST) {
     const now = Math.min(c.noGoogle, GOOGLE_DETAILS_PER_RUN);
     const cost = Math.round(now * GOOGLE_DETAIL_COST * 100) / 100;
     steps.push({
@@ -141,6 +145,7 @@ export async function nextSteps(env: Env, user: Pick<User, "id" | "role">) {
     noGoogle: team.noGoogle,
     sitesUnchecked: admin ? team.sitesUnchecked : Number(mine?.sites ?? 0),
     ai,
+    ...(admin ? { budgetLeft: await monthSpend(env).then((m) => m.left).catch(() => undefined) } : {}),
   };
   return {
     steps: planNextSteps(counts, user.role),

@@ -62,3 +62,11 @@ describe("what to do next", () => {
     expect(s.length).toBe(5);
   });
 });
+
+describe("paid services paused", () => {
+  it("doesn't offer Google ratings when this month's budget is $0", () => {
+    const base = { unassignedNew: 0, myWaiting: 0, noGoogle: 400, sitesUnchecked: 0, ai: null };
+    expect(planNextSteps({ ...base, budgetLeft: 0 }, "super_admin").map((s) => s.key)).not.toContain("google_ratings");
+    expect(planNextSteps({ ...base, budgetLeft: 10 }, "super_admin").map((s) => s.key)).toContain("google_ratings");
+  });
+});

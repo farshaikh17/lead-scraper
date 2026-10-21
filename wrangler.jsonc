@@ -5,6 +5,9 @@
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
+  // Workers Paid: Cloudflare's default CPU time per request, written down (only paid accounts can set it,
+  // so a release on the free plan would be refused here instead of quietly hitting free-plan limits).
+  "limits": { "cpu_ms": 30000 },
 
   // Polls in-flight Apify runs and ingests finished datasets. A webhook would be
   // faster, but the Worker sits behind Cloudflare Access, so Apify can't reach it.

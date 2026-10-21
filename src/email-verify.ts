@@ -9,6 +9,7 @@
 import { bestFirst } from "./emails";
 import { ValidationError } from "./pipeline";
 import { sqlString } from "./leads";
+import { getBudget } from "./ops";
 
 const API = "https://api.millionverifier.com/api/v3/";
 const PER_TICK = 20;          // outside requests per minute job (the free plan allows 50 per run)
@@ -81,6 +82,8 @@ export const QUEUE_EMAIL_SQL = `INSERT INTO email_checks (email, result, queued_
 /** "Verify emails" for these businesses: preview (dryRun) or queue the ones not checked yet. */
 export async function requestVerification(env: VerifyEnv, leadIds: string[], opts: { dryRun?: boolean } = {}) {
   if (!env.MILLIONVERIFIER_API_KEY) throw new ValidationError("Email verification needs the MillionVerifier key (MILLIONVERIFIER_API_KEY).");
+  // A $0 monthly budget pauses every paid service, this one included (it uses bought credits).
+  if (!opts.dryRun && (await getBudget(env)) <= 0) throw new ValidationError("Paid services are paused: this month’s budget is $0 (Admin → Spending).");
   const ids = [...new Set(leadIds)].slice(0, MAX_PER_REQUEST);
   const emails = [...new Set((await bestEmails(env, ids)).values())];
   const have = await known(env, emails);
