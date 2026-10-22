@@ -223,7 +223,7 @@ export async function findLeads(env: Env, reqIn: FindRequest) {
   if (mode === "plan" && req.withCounts) {
     const left = (await monthSpend(env)).left;
     countBudget = Math.min(MAX_NEW_COUNTS, Math.floor(left / COUNT_COST_USD));
-    if (countBudget <= 0) countsSkipped = "Counts were skipped: this month’s budget is used up.";
+    if (countBudget <= 0) countsSkipped = "Counts were skipped: this month’s budget for paid services is used up or set to $0.";
   }
   const ask = async (q: CountQuestion): Promise<CountAnswer | null> => {
     const hit = await cachedCount(env, q);

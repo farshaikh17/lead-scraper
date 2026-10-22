@@ -488,13 +488,13 @@ async function runPhoneChecks(env: Env, limit: number, lock: string): Promise<Ph
     await notify(env, {
       kind: "budget",
       level: "warn",
-      message: "Phone checks are paused: this month's budget is used up. The super admin can raise it on the Admin page.",
+      message: "Phone checks are paused: this month’s budget for paid services is used up or set to $0. The super admin can change it on the Admin page (Spending).",
       dedupeKey: `phones-budget-${new Date().toISOString().slice(0, 7)}`,
     });
   } else if (!pending) {
     state = "idle";
   }
-  if (budgetStopped) refused.push("Budget: this month's budget is used up");
+  if (budgetStopped) refused.push("Budget: this month’s budget is used up or set to $0");
   await saveStatus(env, state, pending);
   return { checked, pending, state, provider: lastProvider, refused };
 }
@@ -531,7 +531,7 @@ export async function phoneStatus(env: Env): Promise<PhoneStatus> {
   if (state === "idle" || state === "busy") state = "running";
   const n = pending.toLocaleString("en-US");
   const message =
-    state === "paused_budget" ? `Phone checks are paused: this month's budget is used up (${n} waiting). The super admin can raise it on the Admin page.`
+    state === "paused_budget" ? `Phone checks are paused: this month’s budget for paid services is used up or set to $0 (${n} waiting). The super admin can change it on the Admin page (Spending).`
     : state === "paused_refused" ? `Phone checks are paused: the phone-check service is out of credit or needs upgrading (${n} waiting).`
     : state === "retrying" ? `Checking phone types: ${n} to go (the service is busy, retrying shortly).`
     : `Checking phone types: ${n} to go. Results appear within a few minutes.`;

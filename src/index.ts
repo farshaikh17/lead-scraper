@@ -1099,10 +1099,13 @@ async function startPhoneRun(env: Env) {
  * minutes rather than hours. backup_chain_at stops the minute job starting a second chain.
  */
 async function backupTick(env: Env) {
+  // While the queue is moving the backup along, the minute job leaves it alone: two callers on the same
+  // step each count a try, and on a busy night that used up the tries without anything going wrong.
+  const last = await env.DB.prepare(`SELECT value FROM app_settings WHERE key = 'backup_chain_at'`).first<string>("value");
+  const chainBusy = !!last && Date.parse(last.replace(" ", "T") + "Z") > Date.now() - 3 * 60_000;
+  if (chainBusy && env.INGEST_QUEUE) return;
   const b = await backupStep(env);
   if (b?.status !== "running" || !env.INGEST_QUEUE) return;
-  const last = await env.DB.prepare(`SELECT value FROM app_settings WHERE key = 'backup_chain_at'`).first<string>("value");
-  if (last && Date.parse(last.replace(" ", "T") + "Z") > Date.now() - 3 * 60_000) return;
   await markBackupChain(env);
   await env.INGEST_QUEUE.send({ backup: true });
 }

@@ -110,6 +110,8 @@ export async function harvestTick(env: Env): Promise<{ started: number } | null>
   const r = await startFreeCollection(env, items, { checkPhones: false, createdBy: null });
   await env.DB.batch([
     stamp,
+    // The list has work again: earlier "covered everything" notices no longer hold.
+    env.DB.prepare(`UPDATE notifications SET dismissed_at = datetime('now') WHERE kind = 'harvest' AND dismissed_at IS NULL`),
     ...results.map((it) => env.DB.prepare(`UPDATE free_harvest SET last_import_id = ?, last_collected_at = datetime('now') WHERE id = ?`).bind(r.importId, it.id)),
   ]);
   return { started: results.length };

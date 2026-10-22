@@ -27,8 +27,9 @@ const START_HOUR_UTC = 7;
 /** Rows per file (= per step). Businesses carry their saved listing, so they go in smaller files. */
 const ROWS_PER_FILE: Record<string, number> = { leads: 100, website_audits: 250, audit_log: 250, searches: 250 };
 export const rowsPerFile = (table: string) => ROWS_PER_FILE[table] ?? 500;
-/** A step that keeps dying at the same place (e.g. cut off by the time limit) fails the backup. */
-const MAX_STEP_TRIES = 3;
+/** A step that keeps dying at the same place (e.g. cut off by the time limit) fails the backup. Six, not three:
+ * a slow, busy database can stop a step a few times without anything being wrong. */
+const MAX_STEP_TRIES = 6;
 /** A backup still 'running' after this long is given up, so the next night's can start. */
 const STALE_HOURS = 20;
 /** Columns the database computes itself (can't be inserted on restore). */

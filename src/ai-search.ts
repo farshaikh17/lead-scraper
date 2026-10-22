@@ -140,7 +140,7 @@ export async function aiSearch(env: Env & { ANTHROPIC_API_KEY?: string }, text: 
   const request = (text ?? "").trim().slice(0, 500);
   if (!request) throw new ValidationError("Describe what you're looking for first.");
   if (!env.ANTHROPIC_API_KEY) throw new ValidationError("Plain-English search needs the AI key (ANTHROPIC_API_KEY). It's added with the other keys in the final week.");
-  if ((await monthSpend(env)).left < 0.05) throw new ValidationError("This month's budget is used up, so plain-English search is paused. The super admin can raise the budget on the Admin page.");
+  if ((await monthSpend(env)).left < 0.05) throw new ValidationError("This month’s budget for paid services is used up or set to $0, so plain-English search is paused. The super admin can change it on the Admin page.");
 
   const { results } = await env.DB.prepare(
     `SELECT gbp_category AS c FROM leads WHERE gbp_category IS NOT NULL GROUP BY gbp_category ORDER BY COUNT(*) DESC LIMIT 400`,
