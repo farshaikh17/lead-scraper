@@ -25,17 +25,19 @@ async function keys(force = false): Promise<Jwk[]> {
 
 export interface OidcClaims {
   iss: string; aud: string | string[]; exp: number; nbf?: number; repository: string; ref: string;
-  workflow_ref?: string; job_workflow_ref?: string; run_id?: string;
+  workflow_ref?: string; job_workflow_ref?: string; run_id?: string; repository_id?: string;
 }
 
 /** Pure checks on the claims (signature checked separately). Returns an error or null. */
-export function checkClaims(c: OidcClaims, repo: string, nowSec = Math.floor(Date.now() / 1000)): string | null {
+export function checkClaims(c: OidcClaims, repo: string, nowSec = Math.floor(Date.now() / 1000), repoId?: string): string | null {
   if (c.iss !== ISSUER) return "wrong issuer";
   const aud = Array.isArray(c.aud) ? c.aud : [c.aud];
   if (!aud.includes(OIDC_AUDIENCE)) return "wrong audience";
   if (!(c.exp > nowSec - 30)) return "expired";
   if (c.nbf && c.nbf > nowSec + 60) return "not yet valid";
-  if (c.repository?.toLowerCase() !== repo.toLowerCase()) return "wrong repository";
+  // GitHub's repository id never changes (a rename or a move to another account keeps it); the name does.
+  if (repoId && c.repository_id) { if (String(c.repository_id) !== String(repoId)) return "wrong repository"; }
+  else if (c.repository?.toLowerCase() !== repo.toLowerCase()) return "wrong repository";
   if (c.ref !== "refs/heads/main") return "not the main branch";
   const wf = c.workflow_ref ?? c.job_workflow_ref ?? "";
   if (!wf.includes("/.github/workflows/free-collect.yml@")) return "not the free collector workflow";
@@ -43,22 +45,27 @@ export function checkClaims(c: OidcClaims, repo: string, nowSec = Math.floor(Dat
 }
 
 /** Verifies a GitHub Actions OIDC token for our repository's free collector. */
-export async function verifyGithubOidc(token: string, repo: string): Promise<OidcClaims | null> {
+export async function verifyGithubOidc(token: string, repo: string, repoId?: string): Promise<OidcClaims | null> {
   const parts = token.split(".");
   if (parts.length !== 3) return null;
   try {
     const header = JSON.parse(new TextDecoder().decode(b64urlToBytes(parts[0]))) as { kid?: string; alg?: string };
-    if (header.alg !== "RS256" || !header.kid) return null;
+    // Why a pass is refused goes to the logs (never the pass itself), so a change on GitHub's side shows up.
+    const no = (why: string) => { console.warn("github-oidc: refused:", why); return null; };
+    if (header.alg !== "RS256" || !header.kid) return no(`header alg ${header.alg} kid ${header.kid ? "set" : "missing"}`);
     let jwk = (await keys()).find((k) => k.kid === header.kid);
     if (!jwk) jwk = (await keys(true)).find((k) => k.kid === header.kid); // keys rotated
-    if (!jwk) return null;
+    if (!jwk) return no(`no published key ${header.kid}`);
     const key = await crypto.subtle.importKey("jwk", { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: "RS256", ext: true },
       { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
     const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b64urlToBytes(parts[2]), new TextEncoder().encode(`${parts[0]}.${parts[1]}`));
-    if (!ok) return null;
+    if (!ok) return no("signature doesn't match");
     const claims = JSON.parse(new TextDecoder().decode(b64urlToBytes(parts[1]))) as OidcClaims;
-    return checkClaims(claims, repo) ? null : claims;
-  } catch {
+    const bad = checkClaims(claims, repo, undefined, repoId);
+    if (bad) return no(`${bad} (repository ${claims.repository}, ref ${claims.ref}, workflow ${claims.workflow_ref ?? claims.job_workflow_ref}, aud ${String(claims.aud)}, iss ${claims.iss})`);
+    return claims;
+  } catch (err) {
+    console.warn("github-oidc: refused: error", err instanceof Error ? err.message : String(err));
     return null;
   }
 }

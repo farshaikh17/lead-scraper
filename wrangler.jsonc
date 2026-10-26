@@ -48,7 +48,9 @@
     // Nightly backups: "1" = on (keeps the newest 14; well inside the R2 free tier).
     "BACKUPS_ENABLED": "1",
     // Where the free collector (GitHub Actions workflow free-collect.yml) lives.
-    "GITHUB_REPO": "Mianrodev/lead-scraper"
+    "GITHUB_REPO": "farshaikh17/lead-scraper",
+    // GitHub's permanent id for that repository: runs are still recognised after a rename or a move.
+    "GITHUB_REPO_ID": "1387869989"
   }
 
   // Secrets (set with `wrangler secret put`, or .dev.vars locally):

@@ -37,7 +37,7 @@ const SAVE_LEASE_MINUTES = 3;
 const MAX_CHUNK_FAILURES = 3;
 const CHUNK_FAILURES_KEY = "free_chunk_failures";
 
-type FreeEnv = Env & { BACKUPS?: R2Bucket; GITHUB_DISPATCH_TOKEN?: string; FREE_COLLECTOR_SECRET?: string; GITHUB_REPO?: string };
+type FreeEnv = Env & { BACKUPS?: R2Bucket; GITHUB_DISPATCH_TOKEN?: string; FREE_COLLECTOR_SECRET?: string; GITHUB_REPO?: string; GITHUB_REPO_ID?: string };
 
 /** Overture categories for a Google business type, or [] when the free data doesn't have it. */
 export function overtureCategories(googleType: string): string[] {
@@ -144,7 +144,7 @@ export async function startFreeCollection(
 /** Starts the free-collect.yml workflow on GitHub (needs GITHUB_DISPATCH_TOKEN). 204 = started. */
 export async function startWorkflow(env: FreeEnv, importId = ""): Promise<Response | null> {
   if (!env.GITHUB_DISPATCH_TOKEN) return null;
-  const repo = env.GITHUB_REPO || "Mianrodev/lead-scraper";
+  const repo = env.GITHUB_REPO || "farshaikh17/lead-scraper";
   return fetch(`https://api.github.com/repos/${repo}/actions/workflows/free-collect.yml/dispatches`, {
     method: "POST",
     headers: {
@@ -195,7 +195,7 @@ export async function collectorAuthorized(env: FreeEnv, header: string | undefin
     for (let i = 0; i < given.length; i++) diff |= given.charCodeAt(i) ^ secret.charCodeAt(i);
     if (diff === 0) return true;
   }
-  return given.split(".").length === 3 && !!(await verifyGithubOidc(given, env.GITHUB_REPO || "Mianrodev/lead-scraper"));
+  return given.split(".").length === 3 && !!(await verifyGithubOidc(given, env.GITHUB_REPO || "farshaikh17/lead-scraper", env.GITHUB_REPO_ID));
 }
 
 /**

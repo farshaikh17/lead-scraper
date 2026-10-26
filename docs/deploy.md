@@ -22,7 +22,7 @@ You can also start it by hand: GitHub → Actions → Deploy → Run workflow.
 
 ### 2. Give it to GitHub
 
-github.com/Mianrodev/lead-scraper → **Settings** → **Secrets and variables** → **Actions** →
+github.com/farshaikh17/lead-scraper → **Settings** → **Secrets and variables** → **Actions** →
 **New repository secret**, twice:
 
 | Name | Value |

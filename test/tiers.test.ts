@@ -82,3 +82,14 @@ describe("free collector sign-in (GitHub's signed pass)", () => {
     expect(checkClaims({ ...ok, iss: "https://evil.example" }, "Mianrodev/lead-scraper", now)).toBe("wrong issuer");
   });
 });
+
+describe("the free collector's repository after a move", () => {
+  const moved = {
+    iss: "https://token.actions.githubusercontent.com", aud: "lead-finder", exp: 2_000_000_000, repository: "farshaikh17/lead-scraper", repository_id: "1387869989",
+    ref: "refs/heads/main", workflow_ref: "farshaikh17/lead-scraper/.github/workflows/free-collect.yml@refs/heads/main",
+  };
+  it("is recognised by its permanent id, whatever its name", () => {
+    expect(checkClaims(moved, "Mianrodev/lead-scraper", 1_900_000_000, "1387869989")).toBeNull();
+    expect(checkClaims({ ...moved, repository_id: "42" }, "farshaikh17/lead-scraper", 1_900_000_000, "1387869989")).toBe("wrong repository");
+  });
+});
