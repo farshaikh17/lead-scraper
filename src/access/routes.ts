@@ -13,7 +13,8 @@ import { brandFor, donePage, expiredPage, landingPage, manualPage, notFoundPage,
 import { gbpMode, signingSecret, type GbpEnv } from "./config";
 import { cookieFor, requestIdFromCookie } from "./crypto";
 import { AccessError, agencyOf, createLink, listLinks, listRequests, markLocationAccepted, requestDetail, updateLink, type AccessRequest, type LinkInput, type RequestLink } from "./db";
-import { grantedFor, grantForRequest, linkBySlug, listForRequest, markManual, rateLimit, requestFor, startRequest, storedToken, takeToken } from "./flow";
+import { authorize, grantedFor, grantForRequest, linkBySlug, listForRequest, markManual, rateLimit, requestFor, startRequest, storedToken, takeToken } from "./flow";
+import { authorizationUrl, CALLBACK_PATH, checkState, exchangeCode, OAuthError } from "./oauth";
 import { GoogleError, mockProvider, NotApprovedError, type GbpProvider } from "./google";
 import { emailOn } from "./mail";
 
@@ -141,11 +142,44 @@ export function mountPublicRoutes(app: App) {
       const { request, mode } = await startRequest(x.env, x.link, await formFields(c));
       await bindBrowser(c, x.env, request.id);
       if (mode === "mock") return c.redirect(`/connect/${x.link.slug}/select`, 303);
-      return c.redirect(`/connect/${x.link.slug}/manual`, 303);
+      if (mode === "manual") return c.redirect(`/connect/${x.link.slug}/manual`, 303);
+      return c.redirect(await authorizationUrl(x.env, new URL(c.req.url).origin, request.id, x.link.slug, request.client_email), 303);
     } catch (err) {
       if (err instanceof AccessError) return c.html(landingPage(x.link, x.brand, gbpMode(x.env), err.message), err.status);
       throw err;
     }
+  });
+
+  // Back from Google's consent page (one redirect URI for every link: the state says which request).
+  app.get(CALLBACK_PATH, async (c) => {
+    const env = c.env as GbpEnv;
+    await rateLimit(env, `cb:${ip(c)}`, 20, 10);
+    const state = gbpMode(env) === "live" ? await checkState(env, c.req.query("state")) : null;
+    const link = state ? await linkBySlug(env, state.s) : null;
+    if (!state || !link) return c.html(notFoundPage("This sign-in link has expired or isn't valid. Please open the link you were sent again."), 400);
+    const brand = brandFor(link, (await agencySettings(env)).name);
+    const cookieId = await requestIdFromCookie(signingSecret(env), getCookie(c, COOKIE));
+    const request = cookieId === state.r ? await requestFor(env, link, cookieId) : null;
+    if (!request || (request.status !== "opened" && request.status !== "authorized")) {
+      return c.html(expiredPage(link, brand, "This sign-in was started in another browser, or it has already been used. Please start again here."), 400);
+    }
+    if (c.req.query("error")) {
+      const cancelled = c.req.query("error") === "access_denied";
+      return c.html(landingPage(link, brand, "live", cancelled ? "Google sign-in was cancelled. You can try again, or add us by hand instead." : "Google sign-in didn't complete. Please try again."), 400);
+    }
+    const code = c.req.query("code");
+    if (!code) return c.html(expiredPage(link, brand, "Google didn't send us back a sign-in. Please start again."), 400);
+    try {
+      const { sealed, googleEmail } = await exchangeCode(env, new URL(c.req.url).origin, code, state);
+      await authorize(env, request.id, googleEmail, sealed);
+    } catch (err) {
+      if (err instanceof OAuthError) {
+        if (err.kind === "exchange") return c.redirect(`/connect/${link.slug}/manual?why=google`, 303);
+        return c.html(landingPage(link, brand, "live", err.message), 400);
+      }
+      throw err;
+    }
+    return c.redirect(`/connect/${link.slug}/select`, 303);
   });
 
   app.get("/connect/:slug/select", async (c) => {

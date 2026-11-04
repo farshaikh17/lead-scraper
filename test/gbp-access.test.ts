@@ -238,3 +238,119 @@ describe("client pages", async () => {
     expect(m).toContain('name="email"');
   });
 });
+
+describe("Google sign-in (OAuth)", async () => {
+  const oauth = await import("../src/access/oauth");
+  const env = { GBP_MODE: "live", GOOGLE_CLIENT_ID: "cid.apps.googleusercontent.com", GOOGLE_CLIENT_SECRET: "csecret", TOKEN_ENC_KEY: "33".repeat(32), STATE_SIGNING_SECRET: "state-secret" } as never;
+  const idToken = (p: object) => `x.${b64url(new TextEncoder().encode(JSON.stringify(p)))}.y`;
+
+  it("asks for offline access with consent, a signed state and PKCE", async () => {
+    const url = new URL(await oauth.authorizationUrl(env, "https://lf.example", "11111111-1111-1111-1111-111111111111", "acme", "pat@x.com"));
+    const q = url.searchParams;
+    expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
+    expect(q.get("access_type")).toBe("offline");
+    expect(q.get("prompt")).toBe("consent");
+    expect(q.get("response_type")).toBe("code");
+    expect(q.get("redirect_uri")).toBe("https://lf.example/api/connect/oauth/callback");
+    expect(q.get("scope")!.split(" ")).toContain("https://www.googleapis.com/auth/business.manage");
+    expect(q.get("code_challenge_method")).toBe("S256");
+    expect(q.get("login_hint")).toBe("pat@x.com");
+    expect(url.toString()).not.toContain("csecret");
+    const st = await oauth.checkState(env, q.get("state")!);
+    expect(st?.r).toBe("11111111-1111-1111-1111-111111111111");
+    expect(st?.s).toBe("acme");
+    expect(await oauth.checkState(env, q.get("state")! + "x")).toBeNull();
+  });
+
+  it("stores only the encrypted refresh token, and reads the email", async () => {
+    const calls: { url: string; body: string }[] = [];
+    const fetcher = (async (url: string, init: RequestInit) => {
+      calls.push({ url, body: String(init.body) });
+      return Response.json({ access_token: "ya29.a", refresh_token: "1//refresh", scope: "openid email https://www.googleapis.com/auth/business.manage", id_token: idToken({ email: "Owner@Gmail.com", email_verified: true }) });
+    }) as unknown as typeof fetch;
+    const st = { r: "r1", s: "acme", n: "n1", exp: Date.now() + 60_000 };
+    const out = await oauth.exchangeCode(env, "https://lf.example", "the-code", st, fetcher);
+    expect(out.googleEmail).toBe("owner@gmail.com");
+    expect(out.sealed).not.toContain("refresh");
+    expect(await decryptSecret("33".repeat(32), out.sealed)).toBe("1//refresh");
+    const sent = new URLSearchParams(calls[0].body);
+    expect(sent.get("grant_type")).toBe("authorization_code");
+    expect(sent.get("code_verifier")!.length).toBeGreaterThanOrEqual(43);
+  });
+
+  it("refuses a sign-in without the Business Profile permission, and gives the token back", async () => {
+    const urls: string[] = [];
+    const fetcher = (async (url: string) => {
+      urls.push(url);
+      return url.includes("revoke") ? new Response("") : Response.json({ access_token: "ya29.a", refresh_token: "1//r", scope: "openid email" });
+    }) as unknown as typeof fetch;
+    await expect(oauth.exchangeCode(env, "https://lf.example", "c", { r: "r", s: "s", n: "n", exp: Date.now() + 1000 }, fetcher)).rejects.toMatchObject({ kind: "scope" });
+    expect(urls.some((u) => u.includes("revoke"))).toBe(true);
+  });
+
+  it("never logs tokens when Google says no", async () => {
+    const logged: unknown[] = [];
+    const orig = console.error;
+    console.error = (...a: unknown[]) => { logged.push(...a); };
+    try {
+      const fetcher = (async () => Response.json({ error: "invalid_grant", refresh_token: "1//leak" }, { status: 400 })) as unknown as typeof fetch;
+      await expect(oauth.exchangeCode(env, "https://lf.example", "c", { r: "r", s: "s", n: "n", exp: Date.now() + 1000 }, fetcher)).rejects.toMatchObject({ kind: "exchange" });
+      await expect(oauth.accessToken(env, "1//secret-refresh", fetcher)).rejects.toMatchObject({ kind: "exchange" });
+    } finally { console.error = orig; }
+    expect(JSON.stringify(logged)).not.toMatch(/1\/\/|csecret|secret-refresh/);
+  });
+
+  it("only trusts a verified email", () => {
+    expect(oauth.emailFromIdToken(idToken({ email: "a@b.com", email_verified: false }))).toBeNull();
+    expect(oauth.emailFromIdToken("garbage")).toBeNull();
+  });
+});
+
+describe("live routes, start to sign-in (Google faked)", async () => {
+  const app = (await import("../src/index")).default;
+  const LIVE = { GBP_MODE: "live", GOOGLE_CLIENT_ID: "cid", GOOGLE_CLIENT_SECRET: "csecret", TOKEN_ENC_KEY: "44".repeat(32), STATE_SIGNING_SECRET: "sss" };
+  const call = (env: Env, path: string, init: RequestInit = {}) => app.fetch(new Request(`https://lf.example${path}`, init), env, { waitUntil() {}, passThroughOnException() {} } as never);
+
+  it("sends the client to Google, then back to the list only in the same browser", async () => {
+    const { env, db } = d1(LIVE);
+    await createLink(env, "main", { ...linkInput, slug: "acme" }, "u1");
+    const start = await call(env, "/api/connect/acme/start", { method: "POST", body: new URLSearchParams({ name: "Pat", email: "pat@x.com" }), headers: { Origin: "https://lf.example" } });
+    expect(start.status).toBe(303);
+    const google = new URL(start.headers.get("Location")!);
+    expect(google.host).toBe("accounts.google.com");
+    const cookie = start.headers.get("Set-Cookie")!.split(";")[0];
+    expect(start.headers.get("Set-Cookie")).toMatch(/HttpOnly/i);
+    const state = google.searchParams.get("state")!;
+
+    // Another browser (no cookie) can't finish this sign-in.
+    const stranger = await call(env, `/api/connect/oauth/callback?code=abc&state=${encodeURIComponent(state)}`);
+    expect(stranger.status).toBe(400);
+    // A forged state is refused.
+    expect((await call(env, `/api/connect/oauth/callback?code=abc&state=x.y`, { headers: { Cookie: cookie } })).status).toBe(400);
+
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => Response.json({ access_token: "ya29", refresh_token: "1//rt", scope: "openid email https://www.googleapis.com/auth/business.manage", id_token: `x.${b64url(new TextEncoder().encode(JSON.stringify({ email: "owner@gmail.com" })))}.y` })) as typeof fetch;
+    try {
+      const back = await call(env, `/api/connect/oauth/callback?code=abc&state=${encodeURIComponent(state)}`, { headers: { Cookie: cookie } });
+      expect(back.status).toBe(303);
+      expect(back.headers.get("Location")).toBe("/connect/acme/select");
+      // Signing in again while still choosing is allowed (it replaces the stored token).
+      const again = await call(env, `/api/connect/oauth/callback?code=abc&state=${encodeURIComponent(state)}`, { headers: { Cookie: cookie } });
+      expect(again.headers.get("Location")).toBe("/connect/acme/select");
+    } finally { globalThis.fetch = realFetch; }
+    const r = db.prepare(`SELECT status, client_google_email FROM access_requests`).get() as { status: string; client_google_email: string };
+    expect(r).toEqual({ status: "authorized", client_google_email: "owner@gmail.com" });
+    const t = db.prepare(`SELECT refresh_token_encrypted FROM oauth_tokens`).get() as { refresh_token_encrypted: string };
+    expect(t.refresh_token_encrypted).not.toContain("1//rt");
+
+  });
+
+  it("refuses cross-site posts and unknown or switched-off links", async () => {
+    const { env } = d1(LIVE);
+    const l = await createLink(env, "main", { ...linkInput, slug: "acme" }, "u1");
+    expect((await call(env, "/api/connect/acme/start", { method: "POST", headers: { Origin: "https://evil.example" } })).status).toBe(403);
+    expect((await call(env, "/connect/nope")).status).toBe(404);
+    await updateLink(env, "main", l.id, { isActive: false });
+    expect((await call(env, "/connect/acme")).status).toBe(404);
+  });
+});

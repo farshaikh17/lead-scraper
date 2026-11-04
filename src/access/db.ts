@@ -65,6 +65,7 @@ export function cleanLinkInput(input: LinkInput, partial = false) {
   if (has("slug") && text(input.slug, 60)) {
     const slug = text(input.slug, 60).toLowerCase();
     if (!SLUG_RE.test(slug)) throw new AccessError("The link address can use lowercase letters, numbers and dashes (3 to 48 characters).");
+    if (slug === "oauth") throw new AccessError("That link address is reserved. Pick another one.");
     out.slug = slug;
   }
   if (has("welcomeText")) out.welcome_text = text(input.welcomeText, 1200) || null;

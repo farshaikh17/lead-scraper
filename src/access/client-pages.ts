@@ -188,9 +188,9 @@ document.getElementById("copyEmail").onclick = function (e) {
 </script>`);
 }
 
-export function notFoundPage(): string {
-  return layout({ name: "Not found", logo: null, color: DEFAULT_ACCENT }, "Link not found",
-    `<section class="card"><h1>This link isn't active</h1><p>It may have been mistyped or switched off. Please ask whoever sent it for a new one.</p></section>`);
+export function notFoundPage(message = "It may have been mistyped or switched off. Please ask whoever sent it for a new one."): string {
+  return layout({ name: "", logo: null, color: DEFAULT_ACCENT }, "Link not found",
+    `<section class="card"><h1>This link isn't active</h1><p>${esc(message)}</p></section>`);
 }
 
 export function expiredPage(link: RequestLink, brand: Brand, message: string): string {
