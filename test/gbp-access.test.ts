@@ -354,3 +354,70 @@ describe("live routes, start to sign-in (Google faked)", async () => {
     expect((await call(env, "/connect/acme")).status).toBe(404);
   });
 });
+
+describe("listing profiles from Google (faked)", async () => {
+  const g = await import("../src/access/google");
+  const env = { GOOGLE_CLIENT_ID: "cid", GOOGLE_CLIENT_SECRET: "cs" } as never;
+  type Route = (u: URL, init: RequestInit) => Response | undefined;
+  function fakeGoogle(route: Route) {
+    const calls: string[] = [];
+    const fetcher = (async (url: string, init: RequestInit) => {
+      const u = new URL(url);
+      calls.push(`${init.method ?? "GET"} ${u.host}${u.pathname}${u.searchParams.get("pageToken") ? "?pt=" + u.searchParams.get("pageToken") : ""}`);
+      if (u.host === "oauth2.googleapis.com") return Response.json({ access_token: "ya29.t" });
+      return route(u, init) ?? new Response("{}", { status: 404 });
+    }) as unknown as typeof fetch;
+    const waits: number[] = [];
+    return { fetcher, calls, waits, sleep: async (ms: number) => { waits.push(ms); } };
+  }
+
+  it("reads every page of accounts and locations", async () => {
+    const f = fakeGoogle((u, init) => {
+      expect((init.headers as Record<string, string>).Authorization).toBe("Bearer ya29.t");
+      if (u.pathname === "/v1/accounts") {
+        return u.searchParams.get("pageToken")
+          ? Response.json({ accounts: [{ name: "accounts/2", accountName: "Second", type: "LOCATION_GROUP" }] })
+          : Response.json({ accounts: [{ name: "accounts/1", accountName: "First", type: "PERSONAL" }], nextPageToken: "p2" });
+      }
+      if (u.pathname === "/v1/accounts/1/locations") {
+        expect(u.searchParams.get("readMask")).toBe("name,title,storefrontAddress");
+        return u.searchParams.get("pageToken")
+          ? Response.json({ locations: [{ name: "locations/12", title: "Shop B" }] })
+          : Response.json({ locations: [{ name: "locations/11", title: "Shop A", storefrontAddress: { addressLines: ["1 Main St"], locality: "Tampa", administrativeArea: "FL", postalCode: "33602" } }], nextPageToken: "q2" });
+      }
+      if (u.pathname === "/v1/accounts/2/locations") return Response.json({});
+    });
+    const accounts = await g.liveProvider(env, "1//r", f.fetcher, f.sleep).listAccounts();
+    expect(accounts).toEqual([
+      { name: "accounts/1", accountName: "First", type: "PERSONAL", locations: [
+        { name: "locations/11", title: "Shop A", address: "1 Main St, Tampa, FL 33602" }, { name: "locations/12", title: "Shop B", address: "" }] },
+      { name: "accounts/2", accountName: "Second", type: "LOCATION_GROUP", locations: [] },
+    ]);
+    expect(f.calls.filter((c) => c.includes("oauth2"))).toHaveLength(1); // one access token for everything
+  });
+
+  it("treats a 403 (API not approved or not switched on) as 'use the manual steps'", async () => {
+    const f = fakeGoogle(() => Response.json({ error: { code: 403, status: "PERMISSION_DENIED", message: "My Business Account Management API has not been used in project 123" } }, { status: 403 }));
+    await expect(g.liveProvider(env, "1//r", f.fetcher, f.sleep).listAccounts()).rejects.toBeInstanceOf(g.NotApprovedError);
+  });
+
+  it("retries 429 with back-off, but not a zero quota", async () => {
+    let n = 0;
+    const busy = fakeGoogle((u) => (u.pathname === "/v1/accounts" && ++n < 3 ? new Response(JSON.stringify({ error: { code: 429, status: "RESOURCE_EXHAUSTED" } }), { status: 429, headers: { "Retry-After": "2" } }) : Response.json({ accounts: [] })));
+    expect(await g.liveProvider(env, "1//r", busy.fetcher, busy.sleep).listAccounts()).toEqual([]);
+    expect(busy.waits).toEqual([2000, 2000]);
+
+    const zero = fakeGoogle(() => Response.json({ error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "Quota exceeded for quota metric 'Requests' and limit 'Requests per minute' of service 'mybusinessaccountmanagement.googleapis.com'", details: [{ reason: "RATE_LIMIT_EXCEEDED", metadata: { quota_limit_value: "0" } }] } }, { status: 429 }));
+    await expect(g.liveProvider(env, "1//r", zero.fetcher, zero.sleep).listAccounts()).rejects.toBeInstanceOf(g.NotApprovedError);
+    expect(zero.waits).toEqual([]);
+
+    const always = fakeGoogle(() => Response.json({ error: { code: 429, status: "RESOURCE_EXHAUSTED", details: [{ metadata: { quota_limit_value: "300" } }] } }, { status: 429 }));
+    await expect(g.liveProvider(env, "1//r", always.fetcher, always.sleep).listAccounts()).rejects.toMatchObject({ httpStatus: 429 });
+    expect(always.waits).toEqual([1000, 2000, 4000]);
+  });
+
+  it("says plainly when the sign-in has expired", async () => {
+    const f = fakeGoogle(() => Response.json({ error: { code: 401 } }, { status: 401 }));
+    await expect(g.liveProvider(env, "1//r", f.fetcher, f.sleep).listAccounts()).rejects.toMatchObject({ httpStatus: 401 });
+  });
+});

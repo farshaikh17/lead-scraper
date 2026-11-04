@@ -11,11 +11,11 @@ import { agencySettings } from "../report";
 import { agencyPageHtml } from "./agency-page";
 import { brandFor, donePage, expiredPage, landingPage, manualPage, notFoundPage, selectPage } from "./client-pages";
 import { gbpMode, signingSecret, type GbpEnv } from "./config";
-import { cookieFor, requestIdFromCookie } from "./crypto";
+import { cookieFor, decryptSecret, requestIdFromCookie } from "./crypto";
 import { AccessError, agencyOf, createLink, listLinks, listRequests, markLocationAccepted, requestDetail, updateLink, type AccessRequest, type LinkInput, type RequestLink } from "./db";
 import { authorize, grantedFor, grantForRequest, linkBySlug, listForRequest, markManual, rateLimit, requestFor, startRequest, storedToken, takeToken } from "./flow";
 import { authorizationUrl, CALLBACK_PATH, checkState, exchangeCode, OAuthError } from "./oauth";
-import { GoogleError, mockProvider, NotApprovedError, type GbpProvider } from "./google";
+import { GoogleError, liveProvider, mockProvider, NotApprovedError, type GbpProvider } from "./google";
 import { emailOn } from "./mail";
 
 type App = Hono<{ Bindings: Env; Variables: { user: User } }>;
@@ -114,9 +114,10 @@ async function formFields(c: C): Promise<{ name?: unknown; email?: unknown }> {
 }
 
 /** Mock requests get the sample profiles; live ones talk to Google with the client's sign-in. */
-async function providerFor(_env: GbpEnv, request: AccessRequest, _sealedToken: string): Promise<GbpProvider> {
+async function providerFor(env: GbpEnv, request: AccessRequest, sealedToken: string): Promise<GbpProvider> {
   if (request.mode === "mock") return mockProvider;
-  throw new NotApprovedError("live mode isn't available yet");
+  if (gbpMode(env) !== "live") throw new NotApprovedError("live mode is switched off");
+  return liveProvider(env, await decryptSecret(env.TOKEN_ENC_KEY!, sealedToken));
 }
 
 export function mountPublicRoutes(app: App) {
@@ -209,6 +210,7 @@ export function mountPublicRoutes(app: App) {
         return c.json({ redirect: `/connect/${x.link.slug}/manual?why=api` });
       }
       if (err instanceof GoogleError) return c.json({ error: err.message }, 502);
+      if (err instanceof OAuthError) return c.json({ error: err.message, redirect: `/connect/${x.link.slug}` }, 410);
       throw err;
     }
   });
@@ -229,6 +231,7 @@ export function mountPublicRoutes(app: App) {
       await grantForRequest(x.env, x.link, x.request, b.locations, await providerFor(x.env, x.request, sealed));
     } catch (err) {
       if (err instanceof NotApprovedError) return c.json({ redirect: `/connect/${x.link.slug}/manual?why=api` });
+      if (err instanceof OAuthError) return c.json({ error: err.message, redirect: `/connect/${x.link.slug}` }, 410);
       if (err instanceof AccessError) {
         // Nothing was sent: put the token back so the client can fix their choice.
         await x.env.DB.prepare(`INSERT OR IGNORE INTO oauth_tokens (request_id, refresh_token_encrypted, expires_at) VALUES (?, ?, datetime('now', '+15 minutes'))`)
