@@ -16,7 +16,7 @@ import { AccessError, agencyOf, createLink, listLinks, listRequests, markLocatio
 import { authorize, grantedFor, grantForRequest, linkBySlug, listForRequest, markManual, rateLimit, requestFor, startRequest, storedToken, takeToken } from "./flow";
 import { authorizationUrl, CALLBACK_PATH, checkState, exchangeCode, OAuthError, revoke } from "./oauth";
 import { GoogleError, liveProvider, mockProvider, NotApprovedError, type GbpProvider } from "./google";
-import { emailOn } from "./mail";
+import { emailOn, notifyFinished } from "./mail";
 
 type App = Hono<{ Bindings: Env; Variables: { user: User } }>;
 type C = Context<{ Bindings: Env; Variables: { user: User } }>;
@@ -126,6 +126,11 @@ async function providerFor(env: GbpEnv, request: AccessRequest, sealedToken: str
 function revokeLater(c: C, env: GbpEnv, request: AccessRequest, sealedToken: string) {
   if (request.mode !== "live" || !env.TOKEN_ENC_KEY) return;
   const job = decryptSecret(env.TOKEN_ENC_KEY, sealedToken).then((t) => revoke(t)).catch(() => console.error("gbp oauth: revoke skipped"));
+  later(c, job);
+}
+
+/** Work that finishes after the answer is sent (emails, revoking). */
+function later(c: C, job: Promise<unknown>) {
   try { c.executionCtx.waitUntil(job); } catch { /* no execution context (tests): the promise still runs */ }
 }
 
@@ -239,6 +244,7 @@ export function mountPublicRoutes(app: App) {
     try {
       await grantForRequest(x.env, x.link, x.request, b.locations, await providerFor(x.env, x.request, sealed));
       revokeLater(c, x.env, x.request, sealed);
+      later(c, notifyFinished(x.env, x.link, x.request.id, new URL(c.req.url).origin));
     } catch (err) {
       if (err instanceof NotApprovedError) {
         revokeLater(c, x.env, x.request, sealed);
@@ -279,6 +285,7 @@ export function mountPublicRoutes(app: App) {
       await rateLimit(x.env, `manual:${ip(c)}`, 10, 10);
       const r = await markManual(x.env, x.link, current, await formFields(c));
       await bindBrowser(c, x.env, r.id);
+      later(c, notifyFinished(x.env, x.link, r.id, new URL(c.req.url).origin));
       return c.redirect(`/connect/${x.link.slug}/done`, 303);
     } catch (err) {
       if (err instanceof AccessError) return c.html(manualPage(x.link, x.brand, { hasRequest: !!current, error: err.message }), err.status);

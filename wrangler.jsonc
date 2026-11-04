@@ -58,4 +58,6 @@
   //   TELNYX_API_KEY     (phone line type via live carrier lookup; preferred when set)
   //   VERIPHONE_API_KEY  (fallback; free tier 1,000/month, number-range data)
   //   ANTHROPIC_API_KEY  (Phase 2)
+  //   Client access (docs/gbp-access.md): GBP_MODE, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_ENC_KEY,
+  //   STATE_SIGNING_SECRET, and for emails RESEND_API_KEY + GBP_EMAIL_FROM
 }

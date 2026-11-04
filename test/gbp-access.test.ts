@@ -485,3 +485,49 @@ describe("sending invitations (Google faked)", async () => {
       { gbp_location_name: "locations/11", status: "pending_invite" }, { gbp_location_name: "locations/12", status: "failed" }]);
   });
 });
+
+describe("emails", async () => {
+  const mail = await import("../src/access/mail");
+  const link = { title: "Acme onboarding", agency_google_email: "team@agency.com", notify_email: null } as never;
+  const rows = [{ title: "Shop A", status: "pending_invite" as const, error_message: null }, { title: "Shop B", status: "failed" as const, error_message: "Only an owner can add people." }];
+
+  it("tells the agency what happened and thanks the client", () => {
+    const m = mail.buildMails(link, { id: "r", status: "partial", client_name: "Pat", client_email: "pat@x.com", client_google_email: "pat@gmail.com" }, rows, "boss@agency.com", "https://lf.example", "Goes Local");
+    expect(m.agency?.to).toBe("boss@agency.com");
+    expect(m.agency?.subject).toBe("Pat shared Business Profile access");
+    expect(m.agency?.lines[0]).toBe(`Pat shared 1 Business Profile through "Acme onboarding" (1 couldn't be shared).`);
+    expect(m.agency?.items).toEqual(["Shop A: invitation sent (accept it in Business Profile)", "Shop B: not shared (Only an owner can add people.)"]);
+    expect(m.agency?.link?.url).toBe("https://lf.example/access");
+    expect(m.client?.to).toBe("pat@x.com");
+    expect(m.client?.subject).toBe("Thanks, Goes Local has your Business Profile request");
+  });
+
+  it("only emails the client when something was shared, and handles 'added by hand'", () => {
+    const failed = mail.buildMails(link, { id: "r", status: "failed", client_name: null, client_email: "pat@x.com", client_google_email: null }, [rows[1]], "boss@agency.com", "https://lf.example", "");
+    expect(failed.client).toBeNull();
+    expect(failed.agency?.subject).toBe("Access request failed: pat@x.com");
+    const manual = mail.buildMails(link, { id: "r", status: "manual_pending", client_name: "Sam", client_email: null, client_google_email: null }, [], "", "https://lf.example", "");
+    expect(manual.agency).toBeNull(); // no address to send to
+    expect(manual.bell).toBe("Sam says they added team@agency.com to their Business Profile by hand.");
+  });
+
+  it("escapes what clients typed", () => {
+    const { html } = mail.renderMail({ to: "a@b.com", subject: "s", lines: ["<img src=x onerror=alert(1)>"] }, "<b>");
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;img");
+  });
+
+  it("sends through Resend only when it's set up", async () => {
+    const { env, db } = d1({ RESEND_API_KEY: "re_test", GBP_EMAIL_FROM: "Goes Local <hi@goeslocal.example>" });
+    const l = await createLink(env, "main", { ...linkInput, slug: "acme", notifyEmail: "alerts@agency.com" }, "u1");
+    db.prepare(`INSERT INTO access_requests (id, agency_id, link_id, client_name, client_email, status) VALUES ('r1', 'main', ?, 'Pat', 'pat@x.com', 'granted')`).run(l.id);
+    db.prepare(`INSERT INTO granted_locations (request_id, gbp_account_name, gbp_location_name, title, status) VALUES ('r1', 'accounts/1', 'locations/1', 'Shop A', 'pending_invite')`).run();
+    const sent: { to: string[]; from: string; subject: string }[] = [];
+    const fetcher = (async (_u: string, init: RequestInit) => { sent.push(JSON.parse(String(init.body))); return Response.json({ id: "e1" }); }) as unknown as typeof fetch;
+    await mail.notifyFinished(env as never, l, "r1", "https://lf.example", fetcher);
+    expect(sent.map((s) => s.to[0])).toEqual(["alerts@agency.com", "pat@x.com"]);
+    expect(sent[0].from).toBe("Goes Local <hi@goeslocal.example>");
+    expect((db.prepare(`SELECT message FROM notifications`).get() as { message: string }).message).toMatch(/Pat shared 1 Business Profile/);
+    expect(await mail.emailOn({ DB: env.DB } as never)).toBe(false);
+  });
+});

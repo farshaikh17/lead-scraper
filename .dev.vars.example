@@ -10,3 +10,17 @@ TELNYX_API_KEY=
 
 # Optional: free key from veriphone.io (1,000 phone checks/month). Leave empty to only detect toll-free numbers.
 VERIPHONE_API_KEY=
+
+# Client access (Google Business Profile access requests, /access and /connect/<link>). See docs/gbp-access.md.
+# GBP_MODE: mock = sample profiles, nothing sent to Google (test the pages); manual = the client gets the
+# step-by-step guide; live = Google sign-in + automatic invitations (needs the four values below). Default: manual.
+GBP_MODE=mock
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+# 32 random bytes, e.g. `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+TOKEN_ENC_KEY=
+# Any long random text (signs the sign-in state and the client's browser cookie)
+STATE_SIGNING_SECRET=
+# Emails (Resend). Sender: GBP_EMAIL_FROM, or the store's "Send emails from" address.
+RESEND_API_KEY=
+GBP_EMAIL_FROM=
