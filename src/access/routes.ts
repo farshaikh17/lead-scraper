@@ -14,7 +14,7 @@ import { gbpMode, signingSecret, type GbpEnv } from "./config";
 import { cookieFor, decryptSecret, requestIdFromCookie } from "./crypto";
 import { AccessError, agencyOf, createLink, listLinks, listRequests, markLocationAccepted, requestDetail, updateLink, type AccessRequest, type LinkInput, type RequestLink } from "./db";
 import { authorize, grantedFor, grantForRequest, linkBySlug, listForRequest, markManual, rateLimit, requestFor, startRequest, storedToken, takeToken } from "./flow";
-import { authorizationUrl, CALLBACK_PATH, checkState, exchangeCode, OAuthError } from "./oauth";
+import { authorizationUrl, CALLBACK_PATH, checkState, exchangeCode, OAuthError, revoke } from "./oauth";
 import { GoogleError, liveProvider, mockProvider, NotApprovedError, type GbpProvider } from "./google";
 import { emailOn } from "./mail";
 
@@ -117,7 +117,16 @@ async function formFields(c: C): Promise<{ name?: unknown; email?: unknown }> {
 async function providerFor(env: GbpEnv, request: AccessRequest, sealedToken: string): Promise<GbpProvider> {
   if (request.mode === "mock") return mockProvider;
   if (gbpMode(env) !== "live") throw new NotApprovedError("live mode is switched off");
-  return liveProvider(env, await decryptSecret(env.TOKEN_ENC_KEY!, sealedToken));
+  const p = liveProvider(env, await decryptSecret(env.TOKEN_ENC_KEY!, sealedToken));
+  await p.token(); // an expired sign-in shows up here (OAuthError), before anything is sent
+  return p;
+}
+
+/** After the grant: end our access to the client's Google account (the stored copy is already deleted). */
+function revokeLater(c: C, env: GbpEnv, request: AccessRequest, sealedToken: string) {
+  if (request.mode !== "live" || !env.TOKEN_ENC_KEY) return;
+  const job = decryptSecret(env.TOKEN_ENC_KEY, sealedToken).then((t) => revoke(t)).catch(() => console.error("gbp oauth: revoke skipped"));
+  try { c.executionCtx.waitUntil(job); } catch { /* no execution context (tests): the promise still runs */ }
 }
 
 export function mountPublicRoutes(app: App) {
@@ -229,8 +238,12 @@ export function mountPublicRoutes(app: App) {
     if (!sealed) return c.json({ error: "Your sign-in has expired. Please start again.", redirect: `/connect/${x.link.slug}` }, 410);
     try {
       await grantForRequest(x.env, x.link, x.request, b.locations, await providerFor(x.env, x.request, sealed));
+      revokeLater(c, x.env, x.request, sealed);
     } catch (err) {
-      if (err instanceof NotApprovedError) return c.json({ redirect: `/connect/${x.link.slug}/manual?why=api` });
+      if (err instanceof NotApprovedError) {
+        revokeLater(c, x.env, x.request, sealed);
+        return c.json({ redirect: `/connect/${x.link.slug}/manual?why=api` });
+      }
       if (err instanceof OAuthError) return c.json({ error: err.message, redirect: `/connect/${x.link.slug}` }, 410);
       if (err instanceof AccessError) {
         // Nothing was sent: put the token back so the client can fix their choice.
@@ -238,6 +251,7 @@ export function mountPublicRoutes(app: App) {
           .bind(x.request.id, sealed).run();
         return c.json({ error: err.message }, err.status);
       }
+      revokeLater(c, x.env, x.request, sealed);
       throw err;
     }
     return c.json({ redirect: `/connect/${x.link.slug}/done` });

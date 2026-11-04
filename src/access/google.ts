@@ -134,6 +134,32 @@ export function formatAddress(a: { addressLines?: string[]; locality?: string; a
   return [...(a.addressLines ?? []), cityLine].filter(Boolean).join(", ");
 }
 
+/**
+ * What one locations.admins.create answer means. Success is an invitation (the agency still has to
+ * accept it), unless Google says the person was added straight away (pendingInvitation false).
+ * Throws NotApprovedError when the API itself is refused, so the client gets the manual steps.
+ */
+export function inviteResult(status: number, body: unknown, level: AccessLevel): InviteResult {
+  if (status === 200) return { status: (body as { pendingInvitation?: boolean })?.pendingInvitation === false ? "granted" : "pending_invite" };
+  const e = (body as GoogleErrorBody)?.error ?? {};
+  console.error("gbp google: admins.create failed", status, e.status ?? "");
+  // A 403 here can also mean "you're only a manager of this profile", so only Google's own
+  // "API not switched on" wording (or a zero quota) counts as the project being refused.
+  const zeroQuota = status === 429 && looksNotApproved(429, body as GoogleErrorBody);
+  const disabled = /SERVICE_DISABLED|accessNotConfigured|has not been used in project|is disabled/i.test(`${e.message ?? ""} ${(e.details ?? []).map((d) => d.reason ?? "").join(" ")}`);
+  if (zeroQuota || disabled) throw new NotApprovedError(`admins.create: ${status}`);
+  if (status === 409) return { status: "pending_invite", error: "Already invited, or already has access. Check Business Profile." };
+  if (status === 403) {
+    return { status: "failed", error: level === "owner"
+      ? "This Google account can't add owners to this profile (only an owner can). Ask the profile's owner, or add us by hand."
+      : "This Google account can't add people to this profile. Ask the profile's owner, or add us by hand." };
+  }
+  if (status === 429) return { status: "failed", error: "Google was too busy to send this invitation. Please try again in a few minutes." };
+  if (status === 0) return { status: "failed", error: "We couldn't reach Google. Please try again." };
+  const msg = googleMessage(body);
+  return { status: "failed", error: msg ? `Google said: ${msg}` : `Google refused (error ${status}).` };
+}
+
 /** Every page of a Google list, up to the bounds above. */
 async function allPages<T>(base: string, key: string, token: string, what: string, fetcher: Fetcher, sleep: Sleep, cap: number): Promise<T[]> {
   const out: T[] = [];
@@ -174,8 +200,12 @@ export function liveProvider(env: GbpEnv, refreshToken: string, fetcher: Fetcher
       }
       return out;
     },
-    async invite() {
-      throw new NotApprovedError("sending invitations isn't set up yet");
+    async invite(locationName, email, level) {
+      const t = await getToken();
+      const { status, body } = await googleCall(ADMINS_URL(locationName), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ admin: email, role: roleFor(level) }),
+      }, t, fetcher, sleep);
+      return inviteResult(status, body, level);
     },
   };
 }

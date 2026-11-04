@@ -421,3 +421,67 @@ describe("listing profiles from Google (faked)", async () => {
     await expect(g.liveProvider(env, "1//r", f.fetcher, f.sleep).listAccounts()).rejects.toMatchObject({ httpStatus: 401 });
   });
 });
+
+describe("sending invitations (Google faked)", async () => {
+  const g = await import("../src/access/google");
+  const app = (await import("../src/index")).default;
+
+  it("reads each kind of answer", () => {
+    expect(g.inviteResult(200, { pendingInvitation: true }, "manager")).toEqual({ status: "pending_invite" });
+    expect(g.inviteResult(200, {}, "manager")).toEqual({ status: "pending_invite" });
+    expect(g.inviteResult(200, { pendingInvitation: false }, "manager")).toEqual({ status: "granted" });
+    expect(g.inviteResult(409, { error: { status: "ALREADY_EXISTS" } }, "manager").status).toBe("pending_invite");
+    expect(g.inviteResult(403, { error: { status: "PERMISSION_DENIED", message: "The caller does not have permission" } }, "owner")).toMatchObject({ status: "failed", error: expect.stringMatching(/owner/) });
+    expect(g.inviteResult(400, { error: { message: "Invalid admin email" } }, "manager")).toEqual({ status: "failed", error: "Google said: Invalid admin email" });
+    expect(() => g.inviteResult(403, { error: { message: "My Business Account Management API has not been used in project 1 before or it is disabled" } }, "manager")).toThrow(g.NotApprovedError);
+    expect(() => g.inviteResult(429, { error: { details: [{ metadata: { quota_limit_value: "0" } }] } }, "manager")).toThrow(g.NotApprovedError);
+  });
+
+  it("runs the whole live flow: sign in, list, grant, token deleted and revoked", async () => {
+    const LIVE = { GBP_MODE: "live", GOOGLE_CLIENT_ID: "cid", GOOGLE_CLIENT_SECRET: "csecret", TOKEN_ENC_KEY: "55".repeat(32), STATE_SIGNING_SECRET: "sss" };
+    const { env, db } = d1(LIVE);
+    await createLink(env, "main", { ...linkInput, slug: "acme", accessLevel: "owner" }, "u1");
+    const call = (path: string, init: RequestInit = {}) => app.fetch(new Request(`https://lf.example${path}`, init), env, { waitUntil() {}, passThroughOnException() {} } as never);
+    const posted: { url: string; body: unknown }[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string, init: RequestInit = {}) => {
+      const u = new URL(input);
+      if (u.host === "oauth2.googleapis.com" && u.pathname === "/token") {
+        const p = new URLSearchParams(String(init.body));
+        return p.get("grant_type") === "authorization_code"
+          ? Response.json({ access_token: "ya29.a", refresh_token: "1//rt", scope: `openid email https://www.googleapis.com/auth/business.manage`, id_token: `x.${b64url(new TextEncoder().encode(JSON.stringify({ email: "owner@gmail.com" })))}.y` })
+          : Response.json({ access_token: "ya29.b" });
+      }
+      if (u.pathname === "/revoke") { posted.push({ url: "revoke", body: String(init.body) }); return new Response(""); }
+      if (u.pathname === "/v1/accounts") return Response.json({ accounts: [{ name: "accounts/1", accountName: "Owner's account", type: "PERSONAL" }] });
+      if (u.pathname === "/v1/accounts/1/locations") return Response.json({ locations: [{ name: "locations/11", title: "Shop A" }, { name: "locations/12", title: "Shop B" }] });
+      if (u.pathname.endsWith("/admins")) {
+        posted.push({ url: u.pathname, body: JSON.parse(String(init.body)) });
+        return u.pathname.includes("/12/") ? Response.json({ error: { code: 403, status: "PERMISSION_DENIED", message: "The caller does not have permission" } }, { status: 403 })
+          : Response.json({ name: "locations/11/admins/9", admin: "team@agency.com", role: "OWNER", pendingInvitation: true });
+      }
+      return new Response("{}", { status: 404 });
+    }) as typeof fetch;
+    try {
+      const start = await call("/api/connect/acme/start", { method: "POST", body: new URLSearchParams({}) });
+      const cookie = start.headers.get("Set-Cookie")!.split(";")[0];
+      const state = new URL(start.headers.get("Location")!).searchParams.get("state")!;
+      await call(`/api/connect/oauth/callback?code=c&state=${encodeURIComponent(state)}`, { headers: { Cookie: cookie } });
+      const list = await (await call("/api/connect/acme/locations", { headers: { Cookie: cookie } })).json() as { accounts: { locations: unknown[] }[] };
+      expect(list.accounts[0].locations).toHaveLength(2);
+      const grant = await call("/api/connect/acme/grant", { method: "POST", headers: { Cookie: cookie, "Content-Type": "application/json" }, body: JSON.stringify({ locations: ["locations/11", "locations/12", "locations/99"] }) });
+      expect(await grant.json()).toEqual({ redirect: "/connect/acme/done" });
+      await new Promise((r) => setTimeout(r, 10)); // the revoke runs after the answer
+    } finally { globalThis.fetch = realFetch; }
+
+    expect(posted.filter((p) => p.url.endsWith("/admins"))).toEqual([
+      { url: "/v1/locations/11/admins", body: { admin: "team@agency.com", role: "OWNER" } },
+      { url: "/v1/locations/12/admins", body: { admin: "team@agency.com", role: "OWNER" } },
+    ]);
+    expect(posted.some((p) => p.url === "revoke" && p.body === "token=1%2F%2Frt")).toBe(true);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM oauth_tokens`).get()).toEqual({ n: 0 });
+    expect(db.prepare(`SELECT status FROM access_requests`).get()).toEqual({ status: "partial" });
+    expect(db.prepare(`SELECT gbp_location_name, status FROM granted_locations ORDER BY id`).all()).toEqual([
+      { gbp_location_name: "locations/11", status: "pending_invite" }, { gbp_location_name: "locations/12", status: "failed" }]);
+  });
+});
