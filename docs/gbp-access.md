@@ -54,6 +54,32 @@ Each profile: `pending_invite` → `granted` (after "I accepted it"), or `failed
   network (start 20, list 30, grant 10, manual 10, callback 20 per 10 minutes) and refuse cross-site posts.
 - Every query is scoped to one agency (`agency_id`, today always `main`).
 
+## Where it runs
+
+- **Lead Finder** (the team's app, behind its sign-in): the Client access page where links are made and
+  requests are seen.
+- **client-access** (`wrangler.access.jsonc`, `src/access/worker.ts`): a separate, public Worker with only
+  the client pages (`/connect/...`, `/api/connect/...`), on its own address such as
+  `https://access.mianrosystems.com`. Same database. It has no sign-in and nothing else of Lead Finder, so it
+  needs no Cloudflare Access bypass. Released with the others by `.github/workflows/deploy.yml`.
+
+Connect the two with `CLIENT_ACCESS_URL` on Lead Finder (links are shown with that address; its own
+`/connect/...` redirects there; the Client access page shows the client app's mode) and `LEAD_FINDER_URL` on
+client-access (the button in emails). The Google settings and `STATE_SIGNING_SECRET` go on **client-access**.
+Without `CLIENT_ACCESS_URL`, Lead Finder serves the client pages itself, as before.
+
+### The address on mianrosystems.com
+
+A Worker custom domain needs the domain's DNS on Cloudflare. Pick one:
+
+- **mianrosystems.com's DNS is already on Cloudflare**: Workers & Pages → client-access → Settings →
+  Domains & Routes → Add → Custom domain → `access.mianrosystems.com`. Cloudflare makes the DNS record and
+  the certificate. Nothing else on the domain changes.
+- **DNS is somewhere else (registrar, GoHighLevel)**: add the domain to Cloudflare (Add a site, free plan),
+  check that every existing record was copied (especially the GoHighLevel website and email records), then
+  change the nameservers at the registrar. Then add the custom domain as above. The main website keeps
+  pointing at GoHighLevel; only `access.` points at the Worker.
+
 ## Setup
 
 1. Apply the migration: `npm run db:migrate:remote` (adds `migrations/0035_gbp_access.sql`).
@@ -70,21 +96,25 @@ Each profile: `pending_invite` → `granted` (after "I accepted it"), or `failed
       Publishing the app for any Google user can need Google's app verification for this scope (the console
       says so when you add it). While the app is in **Testing**, only the test users you add can sign in.
    4. **Credentials → Create credentials → OAuth client ID → Web application**. Authorized redirect URI:
-      `https://<your Lead Finder address>/api/connect/oauth/callback` (and `http://localhost:8787/api/connect/oauth/callback` for local testing).
-3. Worker secrets (run each, paste the value when asked):
+      `https://access.mianrosystems.com/api/connect/oauth/callback` (the client-access address; and
+      `http://localhost:8789/api/connect/oauth/callback` for local testing). Add `mianrosystems.com` under
+      authorized domains on the consent screen.
+3. Secrets on **client-access** (run each, paste the value when asked):
 
    ```bash
-   npx wrangler secret put GBP_MODE              # live (or manual / mock)
-   npx wrangler secret put GOOGLE_CLIENT_ID
-   npx wrangler secret put GOOGLE_CLIENT_SECRET
-   npx wrangler secret put TOKEN_ENC_KEY         # 64 hex characters: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-   npx wrangler secret put STATE_SIGNING_SECRET  # any long random text
-   npx wrangler secret put RESEND_API_KEY        # emails (optional)
-   npx wrangler secret put GBP_EMAIL_FROM        # e.g. Goes Local <hello@yourdomain.com> (a domain verified in Resend)
+   npx wrangler secret put STATE_SIGNING_SECRET -c wrangler.access.jsonc  # any long random text (set this first, in every mode)
+   npx wrangler secret put GBP_MODE -c wrangler.access.jsonc              # manual now; live once Google approves
+   npx wrangler secret put LEAD_FINDER_URL -c wrangler.access.jsonc       # Lead Finder's https address
+   npx wrangler secret put GOOGLE_CLIENT_ID -c wrangler.access.jsonc
+   npx wrangler secret put GOOGLE_CLIENT_SECRET -c wrangler.access.jsonc
+   npx wrangler secret put TOKEN_ENC_KEY -c wrangler.access.jsonc         # 64 hex characters: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   npx wrangler secret put RESEND_API_KEY -c wrangler.access.jsonc        # emails (optional)
+   npx wrangler secret put GBP_EMAIL_FROM -c wrangler.access.jsonc        # e.g. Mianro Systems <hello@mianrosystems.com> (verified in Resend)
    ```
 
-   Set `STATE_SIGNING_SECRET` in manual mode too: without it a fixed development value signs the cookies.
-4. If the Lead Finder address is behind a Cloudflare Access application, add a bypass for
-   `/connect/*` and `/api/connect/*` (clients have no team login), like the report links (`/r/*`).
+   And on Lead Finder: `npx wrangler secret put CLIENT_ACCESS_URL` → `https://access.mianrosystems.com`.
+   Without it a fixed development value signs the cookies, so never skip `STATE_SIGNING_SECRET`.
+4. Only if you serve the client pages from Lead Finder itself (no `CLIENT_ACCESS_URL`) and Lead Finder is
+   behind Cloudflare Access: add a bypass for `/connect/*` and `/api/connect/*`.
 5. Set the agency name (and email, for notifications) on the Admin page under "Your agency (shown on reports)"; links can
    override the notification email and add a logo (https) and colour.

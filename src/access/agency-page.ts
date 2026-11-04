@@ -110,7 +110,8 @@ ${THEME_SCRIPT}
       if (r.status === 401) { location.href = "/login"; }
       if (!r.ok) throw new Error(j.error || "Something went wrong."); return j; }); });
   }
-  function linkUrl(l) { return location.origin + "/connect/" + l.slug; }
+  var publicBase = location.origin;
+  function linkUrl(l) { return publicBase + "/connect/" + l.slug; }
   function drawLinks() {
     var tb = document.getElementById("links");
     document.getElementById("noLinks").hidden = links.length > 0;
@@ -196,14 +197,18 @@ ${THEME_SCRIPT}
       .then(function () { openDetail(openId); }).catch(function (err) { alert(err.message); });
     if (t.id === "closeDetail") { document.getElementById("detail").hidden = true; openId = null; loadRequests(); }
   });
-  api("/api/access/config").then(function (c) {
+  function showConfig(c) {
+    if (c.publicBase) publicBase = c.publicBase;
     var n = document.getElementById("modeNote"), msg = "";
-    if (c.mode === "mock") msg = "Test mode: clients see sample profiles and nothing is sent to Google (GBP_MODE=mock).";
+    if (c.publicBase && !c.reachable) msg = "The client pages at " + c.publicBase + " didn't answer. Check that the client-access app is released and its address is set up.";
+    else if (c.mode === "mock") msg = "Test mode: clients see sample profiles and nothing is sent to Google (GBP_MODE=mock).";
     else if (c.mode === "manual") msg = "Manual mode: clients get the step-by-step guide to add you by hand (GBP_MODE=manual, or the Google keys aren't set).";
-    if (!c.emailOn) msg += (msg ? " " : "") + "Emails are off until RESEND_API_KEY and a sender address are set.";
+    if (c.emailOn === false) msg += (msg ? " " : "") + "Emails are off until RESEND_API_KEY and a sender address are set.";
     n.textContent = msg; n.hidden = !msg;
-  }).catch(function () {});
-  loadLinks().then(loadRequests).catch(function (e) { alert(e.message); });
+  }
+  // The links are drawn after the config, so they show the client pages' own address.
+  api("/api/access/config").then(showConfig, function () {})
+    .then(loadLinks).then(loadRequests).catch(function (e) { alert(e.message); });
 })();
 </script>
 </body></html>`;

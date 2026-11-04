@@ -24,3 +24,7 @@ STATE_SIGNING_SECRET=
 # Emails (Resend). Sender: GBP_EMAIL_FROM, or the store's "Send emails from" address.
 RESEND_API_KEY=
 GBP_EMAIL_FROM=
+# When the client pages run as their own app (wrangler.access.jsonc), Lead Finder gets its address and the
+# client app gets Lead Finder's (for the button in emails). Leave empty to serve the pages from Lead Finder.
+CLIENT_ACCESS_URL=
+LEAD_FINDER_URL=

@@ -76,7 +76,8 @@ import {
   ValidationError,
   type SearchInput,
 } from "./pipeline";
-import { ACCESS_PUBLIC_PATHS, accessErrorResponse, mountAgencyRoutes, mountPublicRoutes } from "./access/routes";
+import { ACCESS_PUBLIC_PATHS, accessErrorResponse, connectHeaders, mountAgencyRoutes, mountPublicRoutes } from "./access/routes";
+import { baseUrl, type GbpEnv } from "./access/config";
 import { dropExpiredTokens } from "./access/flow";
 
 // Auth: team members sign in with email + password (src/auth.ts). Everything except the
@@ -138,24 +139,7 @@ const embeddableHeaders = secureHeaders({
     objectSrc: ["'none'"],
   },
 });
-// Client access pages (/connect/...): like the strict set, but "Continue with Google" posts a form that
-// is redirected to Google's sign-in, which form-action has to allow.
-const connectHeaders = secureHeaders({
-  xFrameOptions: "DENY",
-  referrerPolicy: "same-origin",
-  contentSecurityPolicy: {
-    defaultSrc: ["'self'"],
-    scriptSrc: ["'self'", "'unsafe-inline'"],
-    styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-    fontSrc: ["https://fonts.gstatic.com"],
-    imgSrc: ["'self'", "data:", "https:"],
-    connectSrc: ["'self'"],
-    formAction: ["'self'", "https://accounts.google.com"],
-    frameAncestors: ["'none'"],
-    baseUri: ["'none'"],
-    objectSrc: ["'none'"],
-  },
-});
+// Client access pages (/connect/...) use their own set (src/access/routes.ts).
 app.use("*", (c, next) => {
   const path = new URL(c.req.url).pathname;
   if (path.startsWith("/f/")) return embeddableHeaders(c, next);
@@ -358,6 +342,13 @@ app.post("/api/free/collector/:id/failed", async (c) => {
 });
 
 // --- Client access links (public; src/access/) ---------------------------------------
+// When the client pages run in their own app (CLIENT_ACCESS_URL), old links to this site are sent there.
+app.get("/connect/*", async (c, next) => {
+  const base = baseUrl((c.env as GbpEnv).CLIENT_ACCESS_URL);
+  if (!base) return next();
+  const u = new URL(c.req.url);
+  return c.redirect(`${base}${u.pathname}${u.search}`, 302);
+});
 mountPublicRoutes(app);
 
 // --- Everything below needs a signed-in user -------------------------------------

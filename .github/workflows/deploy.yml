@@ -1,6 +1,6 @@
 # Release from GitHub, not from anyone's computer. Every push to main that changes the app:
-# type-check and tests, then the database updates (migrations/), then both Workers (the internal
-# app and the store). If a check fails, nothing is released.
+# type-check and tests, then the database updates (migrations/), then the Workers (the internal
+# app, the store and client access). If a check fails, nothing is released.
 #
 # Needs two repository secrets (Settings -> Secrets and variables -> Actions):
 #   CLOUDFLARE_API_TOKEN   a Cloudflare API token that can edit Workers and D1 (see docs/deploy.md)
@@ -16,6 +16,7 @@ on:
       - "migrations/**"
       - "wrangler.jsonc"
       - "wrangler.store.jsonc"
+      - "wrangler.access.jsonc"
       - "package.json"
       - "package-lock.json"
       - "tsconfig.json"
@@ -61,3 +62,5 @@ jobs:
         run: npx wrangler deploy
       - name: Release the store
         run: npx wrangler deploy -c wrangler.store.jsonc
+      - name: Release client access
+        run: npx wrangler deploy -c wrangler.access.jsonc

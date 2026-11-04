@@ -1,0 +1,28 @@
+{
+  // Client access: the public pages clients open to share their Google Business Profile
+  // (src/access/worker.ts, docs/gbp-access.md). Deploy with
+  //   npx wrangler deploy -c wrangler.access.jsonc
+  // Shares the database with Lead Finder (same database_id). Migrations are applied from wrangler.jsonc.
+  // Its own address (e.g. access.mianrosystems.com) is added in Cloudflare: Workers & Pages →
+  // client-access → Settings → Domains & Routes → Add → Custom domain.
+  //
+  // Secrets for this app (npx wrangler secret put NAME -c wrangler.access.jsonc):
+  //   STATE_SIGNING_SECRET  (always), GBP_MODE, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_ENC_KEY,
+  //   RESEND_API_KEY, GBP_EMAIL_FROM, LEAD_FINDER_URL
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "client-access",
+  "main": "src/access/worker.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "triggers": { "crons": ["*/15 * * * *"] },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lead-scraper-db",
+      "database_id": "cafa4171-18dc-4dba-bbc0-ef86a1561cd0",
+      "preview_database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

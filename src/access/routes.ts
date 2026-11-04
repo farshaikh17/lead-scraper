@@ -10,7 +10,8 @@ import { audit } from "../ops";
 import { agencySettings } from "../report";
 import { agencyPageHtml } from "./agency-page";
 import { brandFor, donePage, expiredPage, landingPage, manualPage, notFoundPage, selectPage } from "./client-pages";
-import { gbpMode, signingSecret, type GbpEnv } from "./config";
+import { secureHeaders } from "hono/secure-headers";
+import { baseUrl, gbpMode, signingSecret, type GbpEnv } from "./config";
 import { cookieFor, decryptSecret, requestIdFromCookie } from "./crypto";
 import { AccessError, agencyOf, createLink, listLinks, listRequests, markLocationAccepted, requestDetail, updateLink, type AccessRequest, type LinkInput, type RequestLink } from "./db";
 import { authorize, grantedFor, grantForRequest, linkBySlug, listForRequest, markManual, rateLimit, requestFor, startRequest, storedToken, takeToken } from "./flow";
@@ -22,6 +23,28 @@ type App = Hono<{ Bindings: Env; Variables: { user: User } }>;
 type C = Context<{ Bindings: Env; Variables: { user: User } }>;
 
 export const ACCESS_PUBLIC_PATHS = ["/connect/*", "/api/connect/*"];
+
+// Client pages: self-contained, not embeddable; "Continue with Google" posts a form that is redirected
+// to Google's sign-in, which form-action has to allow. Used by Lead Finder and the client-access app.
+export const connectHeaders = secureHeaders({
+  xFrameOptions: "DENY",
+  referrerPolicy: "same-origin",
+  contentSecurityPolicy: {
+    defaultSrc: ["'self'"],
+    scriptSrc: ["'self'", "'unsafe-inline'"],
+    styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+    fontSrc: ["https://fonts.gstatic.com"],
+    imgSrc: ["'self'", "data:", "https:"],
+    connectSrc: ["'self'"],
+    formAction: ["'self'", "https://accounts.google.com"],
+    frameAncestors: ["'none'"],
+    baseUri: ["'none'"],
+    objectSrc: ["'none'"],
+  },
+});
+
+/** Where the "Open Client access" button in emails points: Lead Finder (set on the client-access app), else this site. */
+const dashboardOrigin = (c: C) => baseUrl((c.env as GbpEnv).LEAD_FINDER_URL) || new URL(c.req.url).origin;
 const COOKIE = "gbp_req";
 const ip = (c: C) => c.req.header("CF-Connecting-IP") ?? "local";
 
@@ -40,9 +63,14 @@ export function accessErrorResponse(err: unknown): Response | null {
 export function mountAgencyRoutes(app: App) {
   app.get("/access", (c) => (c.get("user").must_change_password ? c.redirect("/login") : c.html(agencyPageHtml)));
 
+  // With CLIENT_ACCESS_URL the client pages run in the separate app, so its settings are the ones that count.
   app.get("/api/access/config", async (c) => {
     const env = c.env as GbpEnv;
-    return c.json({ mode: gbpMode(env), emailOn: await emailOn(env) });
+    const publicBase = baseUrl(env.CLIENT_ACCESS_URL);
+    if (!publicBase) return c.json({ mode: gbpMode(env), emailOn: await emailOn(env), publicBase: "" });
+    const res = await fetch(`${publicBase}/api/connect/status`, { signal: AbortSignal.timeout(5000) }).catch(() => null);
+    const s = res && res.ok ? await res.json<{ mode?: string; emailOn?: boolean }>().catch(() => null) : null;
+    return c.json({ mode: s?.mode ?? null, emailOn: s?.emailOn ?? null, publicBase, reachable: !!s });
   });
 
   app.get("/api/access/links", async (c) => {
@@ -140,6 +168,12 @@ export function mountPublicRoutes(app: App) {
     noStore(c);
     if (c.req.method !== "GET" && !sameOrigin(c)) return c.json({ error: "Cross-site request refused" }, 403);
     await next();
+  });
+
+  // For Lead Finder's Client access page: which mode this app runs in (nothing secret).
+  app.get("/api/connect/status", async (c) => {
+    const env = c.env as GbpEnv;
+    return c.json({ mode: gbpMode(env), emailOn: await emailOn(env) });
   });
 
   app.get("/connect/:slug", async (c) => {
@@ -244,7 +278,7 @@ export function mountPublicRoutes(app: App) {
     try {
       await grantForRequest(x.env, x.link, x.request, b.locations, await providerFor(x.env, x.request, sealed));
       revokeLater(c, x.env, x.request, sealed);
-      later(c, notifyFinished(x.env, x.link, x.request.id, new URL(c.req.url).origin));
+      later(c, notifyFinished(x.env, x.link, x.request.id, dashboardOrigin(c)));
     } catch (err) {
       if (err instanceof NotApprovedError) {
         revokeLater(c, x.env, x.request, sealed);
@@ -285,7 +319,7 @@ export function mountPublicRoutes(app: App) {
       await rateLimit(x.env, `manual:${ip(c)}`, 10, 10);
       const r = await markManual(x.env, x.link, current, await formFields(c));
       await bindBrowser(c, x.env, r.id);
-      later(c, notifyFinished(x.env, x.link, r.id, new URL(c.req.url).origin));
+      later(c, notifyFinished(x.env, x.link, r.id, dashboardOrigin(c)));
       return c.redirect(`/connect/${x.link.slug}/done`, 303);
     } catch (err) {
       if (err instanceof AccessError) return c.html(manualPage(x.link, x.brand, { hasRequest: !!current, error: err.message }), err.status);

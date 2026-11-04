@@ -355,6 +355,48 @@ describe("live routes, start to sign-in (Google faked)", async () => {
   });
 });
 
+describe("separate client-access app (its own address)", async () => {
+  const worker = (await import("../src/access/worker")).default;
+  const main = (await import("../src/index")).default;
+  const { baseUrl } = await import("../src/access/config");
+  const ctx = { waitUntil() {}, passThroughOnException() {} } as never;
+  const hit = (app: { fetch: (r: Request, e: Env, c: never) => Response | Promise<Response> }, env: Env, url: string, init: RequestInit = {}) => app.fetch(new Request(url, init), env, ctx);
+
+  it("cleans the addresses it's given", () => {
+    expect(baseUrl("https://access.mianrosystems.com/")).toBe("https://access.mianrosystems.com");
+    expect(baseUrl(" https://access.mianrosystems.com/connect/x ")).toBe("https://access.mianrosystems.com");
+    expect(baseUrl("http://access.mianrosystems.com")).toBe("");
+    expect(baseUrl("http://localhost:8788")).toBe("http://localhost:8788");
+    expect(baseUrl("javascript:alert(1)")).toBe("");
+    expect(baseUrl(undefined)).toBe("");
+  });
+
+  it("serves the client pages and nothing of Lead Finder", async () => {
+    const { env } = d1({ GBP_MODE: "mock" });
+    await createLink(env, "main", { ...linkInput, slug: "acme" }, "u1");
+    const page = await hit(worker, env, "https://access.example/connect/acme");
+    expect(page.status).toBe(200);
+    expect(page.headers.get("Content-Security-Policy")).toContain("https://accounts.google.com");
+    expect(await (await hit(worker, env, "https://access.example/api/connect/status")).json()).toEqual({ mode: "mock", emailOn: false });
+    for (const p of ["/", "/login", "/access", "/api/access/links", "/api/leads"]) {
+      expect((await hit(worker, env, `https://access.example${p}`)).status).toBe(404);
+    }
+    // The whole mock flow works on its own address.
+    const start = await hit(worker, env, "https://access.example/api/connect/acme/start", { method: "POST", body: new URLSearchParams({ name: "Pat" }), headers: { Origin: "https://access.example" } });
+    expect(start.headers.get("Location")).toBe("/connect/acme/select");
+  });
+
+  it("Lead Finder sends old links to the client-access address", async () => {
+    const { env } = d1({ CLIENT_ACCESS_URL: "https://access.mianrosystems.com" });
+    const r = await hit(main, env, "https://lf.example/connect/acme?x=1");
+    expect(r.status).toBe(302);
+    expect(r.headers.get("Location")).toBe("https://access.mianrosystems.com/connect/acme?x=1");
+    // Without the setting the pages are served here, as before.
+    const { env: plain } = d1();
+    expect((await hit(main, plain, "https://lf.example/connect/acme")).status).toBe(404);
+  });
+});
+
 describe("listing profiles from Google (faked)", async () => {
   const g = await import("../src/access/google");
   const env = { GOOGLE_CLIENT_ID: "cid", GOOGLE_CLIENT_SECRET: "cs" } as never;
