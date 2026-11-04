@@ -605,6 +605,7 @@ ${themeCss()}
     <button class="tab" data-tab="history" type="button">Search history</button>
     <button class="tab" data-tab="team" type="button" id="teamTab" hidden>Team</button>
     <button class="tab" data-tab="activity" type="button" id="activityTab" hidden>Admin</button>
+    <a class="tab" href="/access" style="text-decoration:none" title="Ask clients for access to their Google Business Profiles">Client access</a>
   </div>
   <div class="me">
     <button type="button" id="spend" class="spend" title="Spent this month (collecting, phone checks, counts) out of the monthly budget"></button>
@@ -4273,7 +4274,7 @@ function setTab(tab, fromHash, prep) {
   }
   syncNext();
 }
-document.querySelectorAll(".tab").forEach((t) => t.onclick = () => setTab(t.dataset.tab));
+document.querySelectorAll(".tab[data-tab]").forEach((t) => t.onclick = () => setTab(t.dataset.tab));
 /** #find, #database … #admin -> the tab (Back / Forward / refresh). */
 const tabFromHash = () => { const h = location.hash.replace("#", "").split("/")[0]; return h === "admin" ? "activity" : h; };
 window.addEventListener("popstate", () => { const t = tabFromHash() || "find"; if (t !== currentTab) setTab(t, true); });

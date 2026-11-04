@@ -76,6 +76,7 @@ import {
   ValidationError,
   type SearchInput,
 } from "./pipeline";
+import { accessErrorResponse, mountAgencyRoutes } from "./access/routes";
 
 // Auth: team members sign in with email + password (src/auth.ts). Everything except the
 // sign-in page and its API needs a signed-in user; user management needs an admin.
@@ -90,6 +91,8 @@ app.onError((err, c) => {
     return c.json({ error: err.message, repeat: true, windowDays: REPEAT_WINDOW_DAYS, previous: err.previous }, 409);
   }
   if (err instanceof HTTPException) return err.getResponse();
+  const accessErr = accessErrorResponse(err);
+  if (accessErr) return accessErr;
   console.error(err);
   // Cloudflare's free plan has a daily database allowance; say so plainly when it runs out.
   if (/exceeded.*(daily|free tier).*(limit|read|write)|daily .*limit/i.test(String((err as Error)?.message ?? err))) {
@@ -377,6 +380,9 @@ app.patch("/api/admin/users/:id", requireAdmin, async (c) => {
 });
 
 app.get("/", (c) => (c.get("user").must_change_password ? c.redirect("/login") : c.html(dashboardHtml)));
+
+// Google Business Profile access links and the requests clients made (src/access/).
+mountAgencyRoutes(app);
 
 // Before running a search: has this category + city + state been pulled recently?
 app.get("/api/search/check", async (c) =>
