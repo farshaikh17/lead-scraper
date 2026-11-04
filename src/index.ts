@@ -76,7 +76,8 @@ import {
   ValidationError,
   type SearchInput,
 } from "./pipeline";
-import { accessErrorResponse, mountAgencyRoutes } from "./access/routes";
+import { ACCESS_PUBLIC_PATHS, accessErrorResponse, mountAgencyRoutes, mountPublicRoutes } from "./access/routes";
+import { dropExpiredTokens } from "./access/flow";
 
 // Auth: team members sign in with email + password (src/auth.ts). Everything except the
 // sign-in page and its API needs a signed-in user; user management needs an admin.
@@ -137,7 +138,30 @@ const embeddableHeaders = secureHeaders({
     objectSrc: ["'none'"],
   },
 });
-app.use("*", (c, next) => (new URL(c.req.url).pathname.startsWith("/f/") ? embeddableHeaders(c, next) : strictHeaders(c, next)));
+// Client access pages (/connect/...): like the strict set, but "Continue with Google" posts a form that
+// is redirected to Google's sign-in, which form-action has to allow.
+const connectHeaders = secureHeaders({
+  xFrameOptions: "DENY",
+  referrerPolicy: "same-origin",
+  contentSecurityPolicy: {
+    defaultSrc: ["'self'"],
+    scriptSrc: ["'self'", "'unsafe-inline'"],
+    styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+    fontSrc: ["https://fonts.gstatic.com"],
+    imgSrc: ["'self'", "data:", "https:"],
+    connectSrc: ["'self'"],
+    formAction: ["'self'", "https://accounts.google.com"],
+    frameAncestors: ["'none'"],
+    baseUri: ["'none'"],
+    objectSrc: ["'none'"],
+  },
+});
+app.use("*", (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  if (path.startsWith("/f/")) return embeddableHeaders(c, next);
+  if (path.startsWith("/connect/") || path.startsWith("/api/connect/")) return connectHeaders(c, next);
+  return strictHeaders(c, next);
+});
 
 // --- Sign-in (public) ---------------------------------------------------------
 
@@ -153,7 +177,7 @@ function filterParams(c: { req: { url: string }; get: (key: "user") => { id: str
 }
 
 // The free collector (GitHub Actions / a computer) has its own secret instead of a sign-in.
-const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/auth/setup", "/api/auth/status", "/api/free/collector/*", "/r/*", "/d/*", "/f/*"];
+const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/auth/setup", "/api/auth/status", "/api/free/collector/*", "/r/*", "/d/*", "/f/*", ...ACCESS_PUBLIC_PATHS];
 
 const body = async <T>(c: { req: { json: <U>() => Promise<U> } }) =>
   c.req.json<T>().catch(() => {
@@ -332,6 +356,9 @@ app.post("/api/free/collector/:id/failed", async (c) => {
   await collectorFailed(c.env, c.req.param("id"), String(b.error ?? "unknown error"));
   return c.json({ ok: true });
 });
+
+// --- Client access links (public; src/access/) ---------------------------------------
+mountPublicRoutes(app);
 
 // --- Everything below needs a signed-in user -------------------------------------
 
@@ -1127,7 +1154,7 @@ export default {
     // Phone checks run in their own invocation (a queue message), so they never share this
     // run's allowance of outside requests with pull syncing.
     ctx.waitUntil(
-      Promise.allSettled([syncActiveSearches(env), startPhoneRun(env), dailyChecks(env), backupTick(env), trimRawStep(env), freeTick(env), websiteTick(env)]),
+      Promise.allSettled([syncActiveSearches(env), startPhoneRun(env), dailyChecks(env), backupTick(env), trimRawStep(env), freeTick(env), websiteTick(env), dropExpiredTokens(env)]),
     );
   },
   // Queue messages: { searchId } = one saving step of a pull (each step queues the next);
