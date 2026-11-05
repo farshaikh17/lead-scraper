@@ -88,7 +88,9 @@ A Worker custom domain needs the domain's DNS on Cloudflare. Pick one:
       Business Information API** (the ones this feature calls). Google's setup guide also lists Google My
       Business API, My Business Notifications, Verifications, Lodging and Place Actions APIs; they aren't used here.
    2. **Request API access**: Google's form at https://support.google.com/business/contact/api_default
-      ("Application for Basic API Access"). Until approved the quota is 0 and clients get the manual steps.
+      ("Application for Basic API Access"). The account applying must be an owner or manager of a Business
+      Profile that's verified and active for 60+ days (yours or a client's) with a website listed; otherwise the
+      form stops at "Business profile not found". Until approved the quota is 0 and clients get the manual steps.
       Approval shows as a non-zero quota under APIs & Services → the API → Quotas.
    3. **OAuth consent screen** (Google Auth Platform → Branding / Audience / Data access): app name and
       support email, your domain under authorized domains, privacy policy link, user type **External**.
