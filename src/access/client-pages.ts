@@ -64,7 +64,7 @@ function privacyNote(link: RequestLink, brand: Brand, manual: boolean): string {
   return `<p class="note">Your privacy: Google asks you to allow access so we can see which business profiles you manage and invite
   <b>${esc(link.agency_google_email)}</b> as a ${esc(role(link).toLowerCase())} on the ones you tick. We don't post anything or change your profiles,
   and we don't keep your Google sign-in: it's deleted as soon as the invitations are sent. You can remove ${who(brand)} from a profile at any time
-  in Business Profile, under People and access.</p>`;
+  in Business Profile, under People and access. <a href="/privacy">Privacy policy</a></p>`;
 }
 
 export function landingPage(link: RequestLink, brand: Brand, mode: GbpMode, error = ""): string {
@@ -186,6 +186,76 @@ document.getElementById("copyEmail").onclick = function (e) {
   navigator.clipboard.writeText(t).then(function () { e.target.textContent = "Copied"; }, function () { prompt("Copy this email:", t); });
 };
 </script>`);
+}
+
+interface Agency { name: string; email: string; website: string }
+
+const plainBrand = (a: Agency): Brand => ({ name: a.name, logo: null, color: DEFAULT_ACCENT });
+const contactLine = (a: Agency) =>
+  a.email ? `<a href="mailto:${esc(a.email)}">${esc(a.email)}</a>` : "the person at our company who sent you your link";
+
+/** The app's home page (Google's sign-in screen links to it): what this service is, in a few lines. */
+export function homePage(a: Agency): string {
+  const name = esc(a.name || "We");
+  return layout(plainBrand(a), "Business Profile access", `<section class="card">
+  <h1>Share your Google Business Profile with ${a.name ? esc(a.name) : "us"}</h1>
+  <p>${name} ${a.name ? "manages" : "manage"} Google Business Profiles for our clients. This site lets a client give us manager access to their profile
+  in a few clicks: they open the personal link we sent them, sign in with Google, tick the profiles to share, and Google sends us an invitation.</p>
+  <p>Only the profiles a client ticks are shared. Clients can remove us at any time in Business Profile, under People and access.</p>
+  <p>Got a link from us? Open it to start. Otherwise there's nothing to do here.</p>
+  </section>
+  <p class="foot"><a href="/privacy">Privacy policy</a>${a.website ? ` · <a href="${esc(a.website)}" rel="noopener">${esc(a.website.replace(/^https?:\/\//, ""))}</a>` : ""}</p>`);
+}
+
+/**
+ * The privacy policy for this service. It describes what the code actually does with Google data;
+ * change it together with the code (src/access/flow.ts, routes.ts).
+ */
+export function privacyPage(a: Agency): string {
+  const us = esc(a.name || "We");
+  return layout(plainBrand(a), "Privacy policy", `<section class="card">
+  <h1>Privacy policy</h1>
+  <p class="note">For the Business Profile access pages on this site. ${us} ${a.name ? "is" : "are"} responsible for them.</p>
+
+  <h2>What this service does</h2>
+  <p>When you open a link we sent you, you can sign in with Google and choose which of your Google Business Profiles to share with us.
+  We then ask Google to invite our company's Google account as a manager (or owner, if we agreed that with you) on the profiles you chose.
+  That is the only thing we use your Google sign-in for.</p>
+
+  <h2>What we collect</h2>
+  <ul>
+    <li>Your name and email, if you type them in (both optional).</li>
+    <li>The email address of the Google account you sign in with.</li>
+    <li>The names and addresses of the business profiles you manage, so you can choose from them. Once you've chosen, we delete this list
+      and keep only the profiles you shared and whether each invitation was sent.</li>
+    <li>Your network (IP) address, used briefly to stop abuse of these pages.</li>
+  </ul>
+
+  <h2>Your Google sign-in</h2>
+  <p>We ask Google for permission to see the business profiles you manage and to add a person to them (Google calls this "manage your
+  business listings"). We don't post anything, reply to reviews or change your business information with it.</p>
+  <p>The sign-in Google gives us is stored encrypted, only while you're choosing. It's deleted as soon as you press Grant access (or after one
+  hour if you don't), and we then tell Google to cancel it. After that we have no access to your Google account through this site.</p>
+  <p>Our use and transfer of information received from Google APIs adheres to the
+  <a href="https://developers.google.com/terms/api-services-user-data-policy" rel="noopener">Google API Services User Data Policy</a>,
+  including the Limited Use requirements.</p>
+
+  <h2>What we don't do</h2>
+  <p>We don't sell your information, use it for advertising, or share it with anyone except Google (to send the invitations) and the service
+  that sends our emails (to send you a confirmation, if you gave an email).</p>
+
+  <h2>How long we keep it</h2>
+  <p>We keep the record of your request (who shared which profiles, and when) while we work with you, so we know which profiles we manage.
+  Ask us and we'll delete it.</p>
+
+  <h2>Removing our access</h2>
+  <p>You can remove us from a profile at any time in Google Business Profile, under People and access. You can also see and remove apps
+  connected to your Google account at <a href="https://myaccount.google.com/permissions" rel="noopener">myaccount.google.com/permissions</a>.</p>
+
+  <h2>Contact</h2>
+  <p>Questions, or want your information deleted? Contact ${contactLine(a)}.</p>
+  </section>
+  <p class="foot"><a href="/">Home</a></p>`);
 }
 
 export function notFoundPage(message = "It may have been mistyped or switched off. Please ask whoever sent it for a new one."): string {

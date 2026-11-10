@@ -163,6 +163,8 @@ describe("client flow (mock mode)", () => {
     expect(out.results.map((r) => r.status)).toEqual(["pending_invite", "granted", "failed"]);
     expect(out.status).toBe("partial");
     expect((await grantedFor(env, request.id)).map((r) => r.status)).toEqual(["pending_invite", "granted", "failed"]);
+    // The full list of the client's profiles is dropped once they've chosen.
+    expect(db.prepare(`SELECT listing_json FROM access_requests WHERE id = ?`).get(request.id)).toEqual({ listing_json: null });
     const row = db.prepare(`SELECT status, finished_at FROM access_requests WHERE id = ?`).get(request.id) as { status: string; finished_at: string };
     expect(row.status).toBe("partial");
     expect(row.finished_at).toBeTruthy();
@@ -378,9 +380,16 @@ describe("separate client-access app (its own address)", async () => {
     expect(page.status).toBe(200);
     expect(page.headers.get("Content-Security-Policy")).toContain("https://accounts.google.com");
     expect(await (await hit(worker, env, "https://access.example/api/connect/status")).json()).toEqual({ mode: "mock", emailOn: false });
-    for (const p of ["/", "/login", "/access", "/api/access/links", "/api/leads"]) {
+    for (const p of ["/login", "/access", "/api/access/links", "/api/leads"]) {
       expect((await hit(worker, env, `https://access.example${p}`)).status).toBe(404);
     }
+    // Home and privacy pages, for Google's sign-in screen.
+    const home = await hit(worker, env, "https://access.example/");
+    expect(home.status).toBe(200);
+    expect(await home.text()).toContain('href="/privacy"');
+    const privacy = await (await hit(worker, env, "https://access.example/privacy")).text();
+    expect(privacy).toContain("Limited Use");
+    expect(privacy).toContain("deleted as soon as you press Grant access");
     // The whole mock flow works on its own address.
     const start = await hit(worker, env, "https://access.example/api/connect/acme/start", { method: "POST", body: new URLSearchParams({ name: "Pat" }), headers: { Origin: "https://access.example" } });
     expect(start.headers.get("Location")).toBe("/connect/acme/select");

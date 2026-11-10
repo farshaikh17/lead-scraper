@@ -129,7 +129,8 @@ export async function grantForRequest(env: Env, link: RequestLink, request: Acce
   }
   const status = overallStatus(results.map((r) => r.status));
   const failed = results.filter((r) => r.status === "failed").length;
-  await env.DB.prepare(`UPDATE access_requests SET status = ?, error_message = ?, finished_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`)
+  // The list of every profile the client manages was only needed to check their choice: drop it.
+  await env.DB.prepare(`UPDATE access_requests SET status = ?, error_message = ?, listing_json = NULL, finished_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`)
     .bind(status, failed ? `${failed} of ${results.length} profiles couldn't be shared.` : null, request.id).run();
   return { status, results };
 }

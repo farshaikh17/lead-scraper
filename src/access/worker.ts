@@ -8,7 +8,8 @@ import { Hono } from "hono";
 import type { User } from "../auth";
 import { dropExpiredTokens } from "./flow";
 import { accessErrorResponse, connectHeaders, mountPublicRoutes } from "./routes";
-import { notFoundPage } from "./client-pages";
+import { homePage, notFoundPage, privacyPage } from "./client-pages";
+import { agencySettings } from "../report";
 
 const app = new Hono<{ Bindings: Env; Variables: { user: User } }>();
 
@@ -23,6 +24,9 @@ app.onError((err, c) => {
 app.use("*", connectHeaders);
 mountPublicRoutes(app);
 
+// Home and privacy pages (Google's sign-in screen links to both).
+app.get("/", async (c) => c.html(homePage(await agencySettings(c.env))));
+app.get("/privacy", async (c) => c.html(privacyPage(await agencySettings(c.env))));
 app.get("/robots.txt", (c) => c.text("User-agent: *\nDisallow: /\n"));
 app.all("*", (c) => {
   c.header("X-Robots-Tag", "noindex, nofollow");
